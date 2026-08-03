@@ -22,13 +22,13 @@ This repository contains the specification, assembler, and test programs for the
 Clone LLVM and apply patchs:
 
 ```bash
-source setupLLVM.sh
+bash setupLLVM.sh
 ```
 
 Build the modified LLVM toolchain by running:
 
 ```bash
-./buildLLVM.sh
+bash buildLLVM.sh
 ```
 
 ## Running the Tests
