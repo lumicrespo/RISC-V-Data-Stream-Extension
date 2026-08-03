@@ -16,6 +16,10 @@ This repository contains the specification, assembler, and test programs for the
 └── patch/                              # Generated patches (optional)
 ```
 
+## Prerequisite: Install a RISC-V GNU bare-metal toolchain (riscv64-unknown-elf).
+
+Although this project uses LLVM/Clang as the compiler, Clang relies on the GNU toolchain to provide the target sysroot, including the C standard library (newlib), startup files (crt*.o), and runtime libraries (libgcc). These components are required to build and link bare-metal RISC-V executables.
+
 ## Building LLVM
 
 
