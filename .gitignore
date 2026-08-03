@@ -1,0 +1,8 @@
+/llvm-project
+# Object files
+*.o
+# Executables
+*.elf
+# Assembly dumps
+*.dump
+*.s

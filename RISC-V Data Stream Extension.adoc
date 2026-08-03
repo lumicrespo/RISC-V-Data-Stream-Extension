@@ -1,0 +1,674 @@
+= RISC-V Data Stream Extension (DSE)
+Version 0.1-draft
+:doctype: article
+:encoding: utf-8
+:lang: en
+:toc: left
+:numbered:
+:stem: latexmath
+:le: &#8804;
+:ge: &#8805;
+:ne: &#8800;
+:approx: &#8776;
+:inf: &#8734;
+
+:sectnums:
+
+== Introduction
+
+This document is version 0.1-draft of the RISC-V Data Stream Extension (DSE).
+The DSE is a proposed RISC-V extension that adds data stream capabilities 
+to the base RISC-V ISA and existing extensions.
+
+=== DSE Subextension Structure
+
+The DSE specification is subdividable by stream register class.
+An implementation may support one or more of the following class
+subextensions:
+
+[cols="3,3,7"]
+|===
+| Subextension | Class | Description
+
+| DSE-I | Integer        | `regtype=00` enabling streaming for `x` registers.
+| DSE-F | Floating-point | `regtype=01` enabling streaming for `f` registers.
+| DSE-V | Vector         | `regtype=10` enabling streaming for `v` registers.
+| DSE-M | Matrix         | `regtype=11` reserved for streaming for matrix extension.
+|===
+
+Optional functional subextensions further refine pattern description capabilities and control features. These are independent of class subextensions and can be implemented in any combination:
+
+[cols="3,10"]
+|===
+| Subextension | Description
+
+| DSE-MODS   | Enables static modifier family (`ss.app.mod.*`).
+| DSE-MODI   | Enables indirect modifier family (`ss.app.ind.*`).
+| DSE-MODSGI | Enables scatter gather indirect modifier family (`ss.end.sgi.*`).
+| DSE-BR     | Enables stream-state branch instruction families (`ss.b.*`).
+|===
+
+NOTE: DSE-MODI and DSE-MODSGI require the DSE-I subextension to be implemented 
+in order to create streams of indexes to be used in indirect stream access
+patterns.
+
+An implementation conforms to DSE if it implements at least one class
+subextension (i.e, DSE-I, DSE-F, DSE-V, or DSE-M) and obeys all common 
+architectural rules in this document.
+
+NOTE: Profiles may require specific combinations (for example DSE-I+DSE-V),
+but this base draft allows independent class selection.
+
+If an optional functional subextension is not implemented, instructions from
+that subextension shall raise illegal-instruction exceptions.
+
+== DSE Programmer's Model
+
+The DSE programmer's model introduces architecturally visible data streams that 
+drive memory access patterns using explicit stream configuration instructions.
+
+At a high level, DSE allows to:
+
+. configure a data stream with `ss.sta`,
+. adds one or more dimensions with `ss.app` and `ss.end`,
+. data is consumed from the stream datum instead of the register file while 
+the stream is active, and
+. control/terminate execution with control and branch operations.
+
+For a given stream configuration, `ss.sta`,`ss.app` and `ss.end` 
+instructions shall execute in program order. The order in which these 
+instructions appear defines the dimension sequence and therefore the resulting
+memory access pattern.
+
+
+=== Basic Data Streaming Flow
+
+Conceptually, a stream behaves like a hardware-managed nested loop over
+memory. Instead of issuing explicit load/store instructions for every
+iteration, software describes the access pattern once, and the stream engine
+advances addresses automatically and independently.
+
+A basic flow is:
+
+. Start: `ss.sta` maps a stream to a specific register, with a base address and
+	several optional configuration parameters
+. Pattern: one or more `ss.app` instructions add intermediate dimensions
+	`{offset, size, step}`.
+. Finalize: `ss.end` adds the last dimension and closes stream pattern
+	definition.
+. Run: loop body operations consume or produce data by using the configured 
+data stream as operand.
+. Complete: when all dimensions finish, the stream reaches termination and
+	its binding can be released or reconfigured.
+
+A register may be temporarily bound to a data stream identifier by DSE
+configuration instructions. While bound, that register has
+stream semantics according to the configured `regtype` (integer,
+floating-point, vector, or matrix). A stream is bounded to at most one register 
+at a time, and a register may be bound to at most one stream at a time. 
+Streams are automatically unbound when a data stream finishes its iteration,
+ or when the register is explicitly deallocated.
+
+=== Stream as N-Dimensional Access
+
+A data stream pattern is defined with a _N_-dimensional memory access descriptor.
+Each dimension is represented as a triplet:
+
+. `offset`: displacement applied at dimension entry,
+. `size`: iteration count for that dimension,
+. `step`: address increment between consecutive elements of that dimension.
+
+The full stream address generation is obtained by composing all configured
+dimensions from outermost to innermost. A stream with one dimension behaves
+as a 1-D access; additional dimensions describe nested-loop style traversal.
+
+DSE supports up to four dimensions per stream descriptor.
+Dimensions are numbered starting at 1, where dimension 1 denotes the
+outermost loop level. Increasing dimension numbers denote deeper nesting, so
+dimension 4 corresponds to the innermost supported loop level.
+
+Loop nests deeper than four levels are supported by introducing stream 
+configuration instructions inside enclosing loops.
+
+=== Example
+
+
+C-style kernel: `for (i=0; i<N; i++) y[i] += a * x[i];`
+
+[source,asm]
+----
+# Inputs:
+#   a0 = &y[0]
+#   a1 = &x[0]
+#   a2 = N
+#   fa0 = scalar a
+
+li t0, 1 # step = 1
+# Stream preamble (configured once)
+ss.sta.f.ld.w   f3, a1 # load stream of x, 32-bit float elements
+ss.end.f        f3, x0, a2, t0 # {offset=0, size=N, step=1}
+
+ss.sta.f.ld.w   f2, a0 # store stream of y, 32-bit float elements
+ss.end.f      	f2, x0, a2, t0 # {offset=0, size=N, step=1}
+
+ss.sta.f.st.w   f1, a0 # store stream of y, 32-bit float elements
+ss.end.f      	f1, x0, a2, t0 # {offset=0, size=N, step=1}
+
+.Lstream_loop:
+
+fmul.s f4, f3, fa0            # load x[i] and multiply by a
+fadd.s f2, f2, f4             # load y[i] and add a*x[i]
+ss.b.nc f3, .Lstream_loop     # branch while stream f3 not complete
+----
+
+=== Architectural State
+
+The extension defines stream architectural state as:
+
+. stream descriptors indexed by stream identifier (`sid`),
+. binding metadata from architectural registers to active streams,
+. stream control/status metadata required for branch operations,
+. unprivileged stream capability CSRs.
+
+The number of simultaneously active streams is implementation-defined and
+discoverable through CSRs.
+
+==== Stream capability CSRs
+
+DSE adds four unprivileged CSRs (`dsis`, `dsfs`, `dsvs`, `dsms`) that report
+the supported stream capacity per register class.
+
+.New data stream CSRs
+[cols="2,2,2,2,10"]
+[%autowidth]
+|===
+| Address | Privilege | Name   | Width (bits) | Description
+
+| ? | URW | dsis | 32 | Number of Integer data streams
+| ? | URW | dsfs | 32 | Number of Floating-point data streams
+| ? | URW | dsvs | 32 | Number of Vector data streams
+| ? | URW | dsms | 32 | Number of Matrix data streams
+|===
+
+NOTE: CSR addresses are to be defined.
+
+=== Stream Registers
+
+DSE can associate architectural destination registers with stream
+descriptors. The register class is selected by `regtype`:
+
+. integer register destination (`i` form),
+. floating-point register destination (`f` form),
+. vector register destination (`v` form),
+. matrix register destination (`m` form, reserved).
+
+Association is created by stream configuration instructions and remains valid
+until stream termination or explicit termination.
+
+NOTE: Streams of indexes for indirect access patterns do not require register 
+association, and may be used in ` DSE-MODI` and `DSE-MODSGI` modifier 
+instructions without binding to a specific architectural register.
+In this case, the stream is still active but cannot be consumed
+by arithmetic and branch instructions.
+
+TODO: Define trap handling rollback, and context switch.
+
+NOTE: A register not currently bound to a stream behaves as a normal
+architectural register with no DSE-specific interpretation.
+
+
+=== Stream State
+
+Each stream has architecturally visible state sufficient to in the core side to
+support deterministic control behavior and mapping to architectural registers. 
+This state includes:
+
+. mapping state (`active`/`inactive`):
+Indicates whether the stream identifier currently denotes a valid configured
+stream. `active` means that a stream is mapped to a register. `inactive` means
+no valid stream descriptor is associated with that identifier.
+
+. streaming state (`direct`/`indirect`):
+Indicates whether the mapped stream can be used for in the core arithmetic and 
+branch instructions. `direct` means that the stream is configured with a valid 
+register association and can be used as a source operand for arithmetic and 
+branch instructions. `indirect` means that the stream is active but does not 
+have a valid register association, so it cannot be used as a source operand 
+for arithmetic and branch instructions.
+
+. stream identity (`sid`) and register class (`regtype`):
+`sid` uniquely selects the stream descriptor within the class capacity exposed
+by the corresponding `ds*` CSR. `regtype` defines which architectural register
+class the stream semantics apply to (`i`, `f`, `v`, or `m`) and therefore which
+instruction forms may legally reference that stream.
+
+. base address:
+The base address is the reference address loaded at stream start
+(`ss.sta.`). Dimension `offset` values are interpreted relative to this base,
+and all effective addresses generated by the stream are derived from this base
+together with the ordered dimension descriptors. This field is important for 
+aliasing.
+
+. end-of-dimension (EOD) status:
+For each configured dimension, the EOD flags indicates the status of iteration
+of each configured dimension. This status is used for control 
+branch conditions and automatic stream termination.
+
+NOTE: A register without an associated stream is a common register,
+and the Stream State does not contain valid information.
+
+== DSE Instructions
+DSE defines two instruction groups: pattern configuration
+instructions and control instructions.
+
+Pattern configuration instructions (`ss.sta`,`ss.app`, `ss.end`)
+create and refine an N-dimensional memory access descriptor by specifying the
+ordered {offset, size, step} triplets associated with a stream.
+
+Stream control instructions (`ss.c`) operate on an existing stream to manage
+its execution state (e.g., pause, resume, flush, etc.). 
+When implemented, stream-state branch
+instructions (`ss.b`) further couple control flow to stream progress.
+
+=== Encoding organization
+
+The instructions in the DSE are encoded within the custom-0 major opcodes.
+This instructions allow to configure memory accesses in the preamble of loops. 
+The configuration instructions are categorized into three types: `start`, 
+`append`, and `end`. Modifier instructions are a special form of `append` and
+`end` that specificy certain aspects of the iteration pattern.
+Data stream configuration instructions set memory access description to
+`x`, `f`, `v`, and `m` (reserved) registers. A configuration of a stream starts
+with a `start` instruction, can be followed by zero or more `append`
+instructions, and ends with an `end` instruction.
+Each append/end contributes one dimension, so a completed stream is an
+N-dimensional access descriptor built from ordered `{offset, size, step}`
+triplets.
+In addition, stream control instructions and loop control branching instructions 
+are also encoded.
+
+.encoding for instruction categories
+[cols="1,1,1,10"]
+|===
+3+| type [2:0] | Description
+
+| 0 | 0 | 0 | Append dimension
+| 0 | 0 | 1 | Append modifier to dimension
+| 0 | 1 | 0 | End stream and add dimension
+| 0 | 1 | 1 | End stream and add modifier
+| 1 | 0 | x | Start
+| 1 | 1 | 0 | Loop control branch
+| 1 | 1 | 1 | Stream control
+|===
+
+=== Data Stream Configuration Instructions (`ss.sta`)
+
+The `start` instructions configure a stream and binds
+the descriptor to a destination architectural register. The format is shared
+across integer, floating-point, vector, and matrix stream starts. 
+
+NOTE: Some fields are not used for certain `regtype` values.
+
+.START format
+[cols="1,2,2,2,2,1,2,5,3,5,7"]
+|===
+| 31 | 30-29 | 28-27 | 26-25 | 24-23 | 22 | 21-20 | 19-15 | 14-12 | 11-7 | Encoding
+
+| ind | sop | lv | regtype | -    | -  | width | rs1 | type | rd | ss.sta.i
+| -   | sop | lv | regtype | -    | -  | width | rs1 | type | rd | ss.sta.f
+| ind | sop | lv | regtype | eDim | vm | width | rs1 | type | rd | ss.sta.v
+| -   | sop | lv | regtype | eDim | vm | width | rs1 | type | rd | ss.sta.m
+|===
+
+[cols="4,12"]
+|===
+| Field | Description
+
+| ind          | Marks as stream of indexes (used for indirection). This field is active 
+when `DSE-MODI` or `DSE-MODSGI` are implemented. Can only be 
+set for `regtype=00` (integer) and `regtype=10` (vector). 
+| sop[1:0]     | Stream operation selector (`ld`, `st`)
+| lv[1:0]      | Memory level selector (Lv1, Lv2, Lv3)
+| regtype[1:0] | Stream register class (`00=i`, `01=f`, `10=v`, `11=m`)
+| eDim[1:0]    | End-dimension control for vector and matrix stream descriptors
+| vm           | Mask policy bit (`0` masked, `1` unmasked)
+| width[1:0]   | Element width selector (8, 16, 32, 64 bits)
+| rs1[4:0]     | Base address register
+| type[2:0]    | Instruction category field. `10x` denotes START
+| rd[4:0]      | Destination register/stream identifier selector.
+|===
+
+.Regtype encoding
+[cols="1,1,10"]
+|===
+2+| regtype[1:0] | Meaning
+
+| 0 | 0 | Integer stream start (`ss.sta.i.*`)
+| 0 | 1 | Floating-point stream start (`ss.sta.f.*`)
+| 1 | 0 | Vector stream start (`ss.sta.v.*`)
+| 1 | 1 | Reserved for matrix stream start (`ss.sta.m.*`)
+|===
+
+.Width encoding
+[cols="1,1,1,8"]
+|===
+3+| width[1:0] | Element width
+
+| 0 | 0 | B | 8 bits
+| 0 | 1 | H | 16 bits
+| 1 | 0 | W | 32 bits
+| 1 | 1 | D | 64 bits
+|===
+
+.sop encoding
+[cols="1,1,10"]
+|===
+2+| sop[1:0] | Description
+	
+| 0 | 0 | Load Stream (`ld`)
+| 0 | 1 | Store Stream (`st`)
+| 1 | 0 | Reserved for update streams
+| 1 | 1 | free
+|===
+
+.lv encoding
+[cols="1,1,10"]
+|===
+2+| lv[1:0] | Description
+
+| 0 | 0 | Default fetch (implementation-defined)
+| 0 | 1 | Fetch data from L1 cache (`lv1`)
+| 1 | 0 | Fetch data from L2 cache (`lv2`)
+| 1 | 1 | Fetch data from L3 cache (`lv3`)
+|===
+
+NOTE: Support for `lv=01`, `lv=10`, and `lv=11` is optional. If an 
+implementation does not support any non-zero `lv` encoding, this field shall 
+be reserved and ignored by the implementation.
+
+
+==== START mnemonic encoding
+
+START instructions use the following mnemonic form:
+
+`ss.sta.<regclass>.<sop>.<width>[.eDim][.m][.lvN][.i] rd, rs1`
+
+Where:
+
+. `<regclass>` is selected by `regtype[1:0]`: `i` (integer),
+`f` (floating-point), `v` (vector), or `m` (matrix).
+. `<sop>` is selected by `sop[1:0]`: `ld` or `st`.
+. `<width>` is selected by `width[1:0]`: `b` (8 bits), `h` (16 bits), 
+`w` (32 bits), or `d` (64 bits).
+. Optional end-dimension suffix `[eDim]` corresponds to `eDim[1:0]`: 
+`1` (dimension 1), `2` (dimension 2), `3` (dimension 3), 
+`empty` (dimension 4/innermost).
+. Optional fetch suffix `.lvN` corresponds to `lv[1:0]` when an implementation 
+exposes mnemonic-level fetch locality selection: `lv1`, `lv2`, 
+`lv3` for `lv=01`, `lv=10`, and `lv=11` respectively. Default fetch (`lv=00`) 
+is encoded by the absence of a fetch suffix.
+. Optional `.m` indicates masked form (`m=0`) for classes where `m` is active.
+. Optional `.i` indicates indirect stream form (`ind=1`) when permitted.
+
+
+
+==== START instruction constraints
+
+. `ind` is only active when `DSE-MODI` or `DSE-MODSGI` are implemented and 
+only for `regtype=00` (integer) or `regtype=10` (vector); otherwise `ind` 
+shall be zero.
+. `sop` shall encode a supported stream operation (`ld` or `st`); 
+unsupported `sop` encodings are reserved.
+. `lv` shall encode an implementation-supported locality level.
+. `regtype` shall select an implemented class; if the selected class 
+is not implemented, the instruction shall raise illegal-instruction.
+. For `regtype=00` (integer), `eDim` and `m` fields are free.
+. For `regtype=01` (floating-point), `ind`, `eDim`, and `m` fields are free.
+. For `regtype=10` and `regtype=11` (vector and matrix), `eDim` and `m` 
+are active fields.
+. If `width` is not supported by the implementation for the selected `regtype`, 
+the instruction encoding is reserved.
+. `rs1` shall provide the stream base address.
+. `type` shall match START class encoding (`10x`); other `type` values are
+ reserved for non-START classes.
+. `rd` shall encode the destination register selector for the chosen `regtype`;
+unsupported combinations are reserved.
+
+=== Data Stream Append and End Instructions (`ss.app`, `ss.end`)
+
+APPEND and END instructions build the stream pattern.
+
+. `ss.app` adds one dimension `{offset, size, step}` and keeps the	stream open 
+for more dimensions.
+. `ss.end` adds the final dimension `{offset, size, step}` and marks the stream complete for execution.
+
+Both forms share a common encoding and are distinguished by the
+`type[2:1]` field.
+
+.APPEND/END format
+[cols="5,2,5,5,3,5,7"]
+|===
+| 31-25 | 26-25 | 24-20 | 19-15 | 14-12 | 11-7 | 6-0
+
+| rs3 | regtype | rs2 | rs1 | type | sid/rd | custom-0
+|===
+
+[cols="4,12"]
+|===
+| Field | Description
+
+| rs3[4:0]     | Source register for `step` value.
+| regtype[1:0] | Stream register class (`i`, `f`, `v`, `m`).
+| rs2[4:0]     | Source register for `size` value.
+| rs1[4:0]     | Source register for `offset` value.
+| type[2:0]    | Category discriminator (`000` append, `010` end).
+| rd[4:0] |    | Destination register/stream identifier selector.
+|===
+
+The dimension operand mapping is:
+
+. `offset`: base displacement for the new dimension.
+. `size`: number of iterations for the new dimension.
+. `step`: byte stride between iterations for the new dimension.
+
+.type encoding
+[cols="1,5"]
+|===
+1+| type[0] | Description
+
+| 0 | Append/end dimension
+| 1 | Append/end modifier (see next section)
+|===
+
+==== APPEND and END mnemonic encoding
+
+APPEND and END instructions use the following mnemonic form, respectively:
+
+. `ss.app.<regclass> rd, rs1, rs2, rs3`
+. `ss.end.<regclass> rd, rs1, rs2, rs3`
+
+Where:
+
+. `<regclass>` is selected by `regtype[1:0]`: `i` (integer),
+`f` (floating-point), `v` (vector), or `m` (matrix).
+
+==== APPEND and END constraints
+
+. APPEND and END forms shall target a valid stream identified by `rd`.
+. APPEND adds a non-final dimension; END adds a final dimension and closes
+descriptor construction.
+. APPEND and END instructions shall be executed in program order 
+for a given stream; the order in which dimensions are appended and ended 
+defines the resulting access pattern.
+. APPEND and END applied without a corresponding START instruction shall raise 
+illegal-instruction exceptions.
+
+=== Data Stream Modifier Instructions
+
+Modifier instructions are specialized APPEND/END forms that allow to describe
+more complex patterns, witout following a square pattern.
+
+This section is optional and can be implemented in subsets. Modifier
+instruction families are independently controlled by:
+
+. `DSE-MODS` for `ss.app.mod`,
+. `DSE-MODI` for `ss.app.ind`,
+. `DSE-MODSGI` for `ss.end.sgi`.
+
+
+.Modifier format
+[cols="2,2,1,2,3,2,5,3,5,7"]
+|===
+| 31-30 | 29-28 | 27 | 26-25 | 24-22 | 21-20 | 19-15 | 14-12 | 11-7 | Encoding
+
+| tmod | tdim | -     | regtype | behavior | target | rs1    | type | rd | ss.app.mod
+| tmod | tdim | otype | regtype | behavior | target | s1     | type | rd | ss.app.ind
+| -    | -    | otype | regtype | behavior | -      | s1     | type | rd | ss.end.sgi
+|===
+
+[cols="4,12"]
+|===
+| Field | Description
+
+| tmod[1:0]     | Modifier class (static or indirect).
+| tdim[1:0]     | Target dimension to modify.
+| otype         | Stream type selector (`i`,`v`) for stream index s1.
+| regtype[1:0]  | Stream register class (`i`, `f`, `v`, `m`).
+| behavior[2:0] | Modifier behavior within class.
+| target[1:0]   | Modifier parameter target.
+| rs1[4:0]      | Source operand register.
+| s1[4:0]       | Stream of indexes.
+| type[2:0]     | Instruction category field. `001` and `101` denotes modifier 
+classes.
+| rd[4:0]       | Destination register/stream identifier selector.
+|===
+
+.tmod encoding
+[cols="1,1,10"]
+|===
+2+| tmod[1:0] | Description
+
+| 0 | 0 | Static modifier
+| 0 | 1 | Indirect modifier
+| 1 | x | free for future modifier types
+|===
+
+.tdim encoding
+[cols="1,1,10"]
+|===
+2+| tmod[1:0] | Description
+
+| 0 | 0 | Free?
+| 0 | 1 | Targets dimension 2
+| 1 | 0 | Targets dimension 3
+| 1 | 1 | Targets dimension 4/last dimension
+|===
+
+.behavior encoding
+[cols="1,1,1,10"]
+|===
+3+| behavior[2:0] | Description
+
+| 0 | 0 | 0 | Increment the target dimension field by the value in `rs1`.
+| 0 | 0 | 1 | Decrement the target dimension field by the value in `rs1`.
+| 0 | 1 | 0 | Add the value in `rs1` to the target dimension field.
+| 0 | 1 | 1 | Subtract the value in `rs1` from the target dimension field.
+| 1 | 0 | 0 | Set the target dimension field to the value in `rs1`.
+| 1 | 0 | 1 | Free
+| 1 | 1 | 0 | Free
+| 1 | 1 | 1 | Free
+|===
+
+.target encoding
+[cols="1,1,10"]
+|===
+2+| target[1:0] | Description
+
+| 0 | 0 | Modifier targets the `size` field of the target dimension.
+| 0 | 1 | Modifier targets the `offset` field of the target dimension.
+| 1 | 0 | Modifier targets the `stride` field of the target dimension.
+| 1 | 1 | Free
+|===
+
+==== Modifier mnemonic encoding
+
+Modifier instructions use the following mnemonic form:
+
+. `ss.app.mod.<regclass>.<target>.<behavior>.<dim> rd, rs1`
+. `ss.end.sgi.<regclass>. rd, rs1, rs2, rs3`
+
+Where:
+
+. `<regclass>` is selected by `regtype[1:0]`: `i` (integer),
+`f` (floating-point), `v` (vector), or `m` (matrix).
+
+==== Modifier constraints
+
+. If `DSE-MODS` is not implemented, `ss.app.mod.*` shall raise illegal-instruction exceptions.
+. If `DSE-MODI` is not implemented, `ss.app.ind.*` shall raise illegal-instruction exceptions.
+. If `DSE-MODSGI` is not implemented, `ss.end.sgi.*` shall raise illegal-instruction exceptions.
+. Unsupported `tmod`/`behavior` combinations are reserved.
+. `tdim` values beyond implementation-supported dimensionality are reserved.
+. Modifier instructions shall not change `regtype` of an existing stream descriptor.
+
+
+== Stream Control Instructions
+
+.Control format
+[cols="7,2,3,5,3,5,7"]
+|===
+| 31-25 | 24-23   | 22-20  | 19-15 | 14-12 | 11-7   | 6-0
+
+| imm/cfg | regtype | cop  | rs1   | type  | sid/rd | custom-0
+|===
+
+[cols="4,12"]
+|===
+| Field | Description
+
+| imm/cfg[6:0] | Immediate/configuration payload for control operation.
+| regtype[1:0] | Stream register class (`i`, `f`, `v`, `m`).
+| cop[2:0] | Control opcode (pause, resume, flush, query, implementation-defined).
+| rs1[4:0] | Optional source operand register.
+| type[2:0] | Instruction category field. `11x` denotes control class.
+| sid/rd[4:0] | Stream selector and optional destination register.
+| custom-0 | Major opcode in custom-0 space.
+|===
+
+==== Stream control constraints
+
+. Control instructions referencing non-active streams are reserved unless explicitly defined as query-only operations.
+. Implementations may define subsets of `cop`; unsupported values shall raise illegal-instruction exceptions.
+. `query`-class operations shall not mutate stream architectural state.
+
+== Loop Control Branching Instructions
+
+This section is optional and requires subextension `DSE-BR`.
+
+.Branch format
+[cols="1,6,2,1,2,5,3,4,1,7"]
+|===
+| 31      | 30-25     | 24-23   | 22-21 | 20  | 19-15 | 14-12 | 11-8     | 7       | 6-0
+
+| imm[12] | imm[10:5] | regtype | Dhop  | not | rs1   | type  | imm[4:1] | imm[11] | custom-0
+|===
+
+[cols="4,12"]
+|===
+| Field | Description
+
+| imm[12\\|10:5\\|4:1\\|11] | Signed branch offset encoded in split B-type style.
+| regtype[1:0] | Stream register class used by branch condition source.
+| Dhop[1:0] | Dimension-hop selector for hierarchical stream loops.
+| not | Condition inversion bit.
+| rs1[4:0] | Source register or stream-state operand selector.
+| type[2:0] | Instruction category field for branch/control subgroup.
+| custom-0 | Major opcode in custom-0 space.
+|===
+
+==== Branch execution model
+
+. If `DSE-BR` is not implemented, all `ss.b.*` instructions shall raise illegal-instruction exceptions.
+. Branch target is computed as `PC + sext(imm)`.
+. Branch condition is evaluated on stream state selected by `regtype`, `Dhop`, and `rs1`.
+. If `not=1`, the computed predicate is logically inverted before branch decision.

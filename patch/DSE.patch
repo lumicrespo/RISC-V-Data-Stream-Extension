@@ -1,0 +1,710 @@
+diff --git a/llvm/lib/Support/RISCVISAInfo.cpp b/llvm/lib/Support/RISCVISAInfo.cpp
+index 7cb1147d4265..913e48e005ec 100644
+--- a/llvm/lib/Support/RISCVISAInfo.cpp
++++ b/llvm/lib/Support/RISCVISAInfo.cpp
+@@ -120,6 +120,7 @@ static const RISCVSupportedExtension SupportedExperimentalExtensions[] = {
+     {"zvfh", RISCVExtensionVersion{0, 1}},
+     {"zawrs", RISCVExtensionVersion{1, 0}},
+     {"ztso", RISCVExtensionVersion{0, 1}},
++    {"xdse", RISCVExtensionVersion{0, 1}},
+ };
+ 
+ static bool stripExperimentalPrefix(StringRef &Ext) {
+diff --git a/llvm/lib/Target/RISCV/MCTargetDesc/RISCVMCTargetDesc.cpp b/llvm/lib/Target/RISCV/MCTargetDesc/RISCVMCTargetDesc.cpp
+index c63e0c8e737d..8c889b84cd52 100644
+--- a/llvm/lib/Target/RISCV/MCTargetDesc/RISCVMCTargetDesc.cpp
++++ b/llvm/lib/Target/RISCV/MCTargetDesc/RISCVMCTargetDesc.cpp
+@@ -122,7 +122,7 @@ public:
+                       uint64_t &Target) const override {
+     if (isConditionalBranch(Inst)) {
+       int64_t Imm;
+-      if (Size == 2)
++      if (Size == 2 || Inst.getNumOperands() == 2) //DSE branch has 2 operands
+         Imm = Inst.getOperand(1).getImm();
+       else
+         Imm = Inst.getOperand(2).getImm();
+diff --git a/llvm/lib/Target/RISCV/RISCVFeatures.td b/llvm/lib/Target/RISCV/RISCVFeatures.td
+index be8834fd4c2f..766ae849bed6 100644
+--- a/llvm/lib/Target/RISCV/RISCVFeatures.td
++++ b/llvm/lib/Target/RISCV/RISCVFeatures.td
+@@ -389,6 +389,85 @@ def HasVInstructionsAnyF : Predicate<"Subtarget->hasVInstructionsAnyF()">,
+           "'V' (Vector Extension for Application Processors), 'Zve32f', "
+           "'Zve64f' or 'Zve64d' (Vector Extensions for Embedded Processors)">;
+ 
++def FeatureCustomExtDSEI
++    : SubtargetFeature<"experimental-xdsei", "HasCustomExtDSEI", "true",
++                       "'DSE-I' (Integer Data Stream Extension)",
++                       []>;
++def HasCustomExtDSEI
++    : Predicate<"Subtarget->HasCustomExtDSEI()">,
++      AssemblerPredicate<(all_of FeatureCustomExtDSEI),
++                         "'DSE-I' (Integer Data Stream Extension)">;
++
++def FeatureCustomExtDSEF
++    : SubtargetFeature<"experimental-xdsef", "HasCustomExtDSEF", "true",
++                       "'DSE-F' (Floating-Point Data Stream Extension)",
++                       [FeatureStdExtF]>;
++def HasCustomExtDSEF
++    : Predicate<"Subtarget->HasCustomExtDSEF()">,
++      AssemblerPredicate<(all_of FeatureCustomExtDSEF),
++                         "'DSE-F' (Floating-Point Data Stream Extension)">;
++
++def FeatureCustomExtDSEV
++    : SubtargetFeature<"experimental-xdsev", "HasCustomExtDSEV", "true",
++                       "'DSE-V' (Vector Data Stream Extension)",
++                       [FeatureStdExtV]>;
++def HasCustomExtDSEV
++    : Predicate<"Subtarget->HasCustomExtDSEV()">,
++      AssemblerPredicate<(all_of FeatureCustomExtDSEV),
++                         "'DSE-V' (Vector Data Stream Extension)">;
++
++def FeatureCustomExtDSEMODS
++    : SubtargetFeature<"experimental-xdsemods","HasCustomExtDSEMODS","true",
++        "'DSE-MODS' (Static Stream Modifiers)",
++        []>;
++def HasCustomExtDSEMODS
++    : Predicate<"Subtarget->HasCustomExtDSEMODS()">,
++      AssemblerPredicate<(all_of FeatureCustomExtDSEMODS),
++                         "'DSE-MODS' (Static Stream Modifiers)">;
++
++def FeatureCustomExtDSEMODI
++    : SubtargetFeature<"experimental-xdsemodi", "HasCustomExtDSEMODI", "true",
++        "'DSE-MODI' (Indirect Stream Modifiers)",
++        [FeatureCustomExtDSEI]>;
++
++def HasCustomExtDSEMODI
++    : Predicate<"Subtarget->HasCustomExtDSEMODI()">,
++      AssemblerPredicate<(all_of FeatureCustomExtDSEMODI),
++                         "'DSE-MODI' (Indirect Stream Modifiers)">;
++
++def FeatureCustomExtDSEMODSGI
++    : SubtargetFeature<"experimental-xdsemodsgi","HasCustomExtDSEMODSGI","true",
++        "'DSE-MODSGI' (Scatter/Gather Indirect Stream Modifiers)",
++        [FeatureCustomExtDSEI]>;
++def HasCustomExtDSEMODSGI
++    : Predicate<"Subtarget->HasCustomExtDSEMODSGI()">,
++      AssemblerPredicate<(all_of FeatureCustomExtDSEMODSGI),
++                         "'DSE-MODSGI' (Gather/Scatter Indirect Stream Modifiers)">;
++
++def FeatureCustomExtDSEBR
++    : SubtargetFeature<"experimental-xdsebr",
++        "HasCustomExtDSEBR","true","'DSE-BR' (Stream Branch Instructions)",
++        []>;
++def HasCustomExtDSEBR
++    : Predicate<"Subtarget->HasCustomExtDSEBR()">,
++      AssemblerPredicate<(all_of FeatureCustomExtDSEBR),
++                         "'DSE-BR' (Stream Branch Instructions)">;
++
++def FeatureCustomExtDSE
++    : SubtargetFeature<"experimental-xdse","HasCustomExtDSE", "true",
++        "'DSE' (All Data Stream Extensions)",
++        [FeatureCustomExtDSEI,
++         FeatureCustomExtDSEF,
++         FeatureCustomExtDSEV,
++         FeatureCustomExtDSEMODS,
++         FeatureCustomExtDSEMODI,
++         FeatureCustomExtDSEMODSGI,
++         FeatureCustomExtDSEBR]>;
++def HasCustomExtDSE
++    : Predicate<"Subtarget->HasCustomExtDSE()">,
++      AssemblerPredicate<(all_of FeatureCustomExtDSE),
++                         "'DSE' (All Data Stream Extensions)">;
++
+ def FeatureStdExtZvfh
+     : SubtargetFeature<"experimental-zvfh", "HasStdExtZvfh", "true",
+                        "'Zvfh' (Vector Half-Precision Floating-Point)",
+diff --git a/llvm/lib/Target/RISCV/RISCVInstrFormatsDSE.td b/llvm/lib/Target/RISCV/RISCVInstrFormatsDSE.td
+new file mode 100644
+index 000000000000..190b552e1e55
+--- /dev/null
++++ b/llvm/lib/Target/RISCV/RISCVInstrFormatsDSE.td
+@@ -0,0 +1,189 @@
++//===-- RISCVInstrFormatsDSE.td - RISCV DSE Instruction Formats --*- tablegen -*-=//
++//
++// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
++// See https://llvm.org/LICENSE.txt for license information.
++// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
++//
++//===----------------------------------------------------------------------===//
++//
++//  This file describes the DSE extension instruction formats.
++//
++//===----------------------------------------------------------------------===//
++class DSE_regtype<bits<2> regtype> {
++  bits<2> Value = regtype;
++}
++
++def DSE_regtype_I : DSE_regtype<0b00>;
++def DSE_regtype_F : DSE_regtype<0b01>;
++def DSE_regtype_V : DSE_regtype<0b10>;
++def DSE_regtype_NULL : DSE_regtype<0b00>;
++
++class DSE_Instype<bits<2> Itype> {
++  bits<2> Value = Itype;
++}
++
++def DSE_Instype_STA  : DSE_Instype<0b00>;
++def DSE_Instype_APP  : DSE_Instype<0b01>;
++def DSE_Instype_END  : DSE_Instype<0b10>;
++def DSE_Instype_CTRL : DSE_Instype<0b11>;
++def DSE_Instype_NULL : DSE_Instype<0b00>;
++
++class DSE_StreamWidth<bits<2> width> {
++  bits<2> Value = width;
++}
++
++def DSE_StreamWidth_B : DSE_StreamWidth<0b00>;
++def DSE_StreamWidth_H : DSE_StreamWidth<0b01>;
++def DSE_StreamWidth_W : DSE_StreamWidth<0b10>;
++def DSE_StreamWidth_D : DSE_StreamWidth<0b11>;
++def DSE_StreamWidth_NULL : DSE_StreamWidth<0b00>;
++
++
++class DSE_StreamType<bits<2> Stype> {
++  bits<2> Value = Stype;
++}
++
++def DSE_Stype_ST : DSE_StreamType<0b00>;
++def DSE_Stype_LD : DSE_StreamType<0b01>;
++// other options are reserved for future use
++def DSE_Stype_NULL : DSE_StreamType<0b00>;
++
++
++class DSE_StreamDim<bits<2> dim> {
++  bits<2> Value = dim;
++}
++
++def DSE_StreamDim_1 : DSE_StreamDim<0b00>;
++def DSE_StreamDim_2 : DSE_StreamDim<0b01>;
++def DSE_StreamDim_3 : DSE_StreamDim<0b10>;
++def DSE_StreamDim_4 : DSE_StreamDim<0b11>;
++def DSE_StreamDim_NULL : DSE_StreamDim<0b00>;
++
++
++class DSE_Predicate<bits<1> Spred> {
++  bits<1> Value = Spred;
++}
++
++def DSE_masked      : DSE_Predicate<0b0>;
++def DSE_unmasked    : DSE_Predicate<0b1>;
++def DSE_masked_NULL : DSE_Predicate<0b0>;
++
++
++class DSE_StreamCache<bits<2> cachelvl> {
++  bits<2> Value = cachelvl;
++}
++def DSE_StreamCache_N : DSE_StreamCache<0b00>;
++def DSE_StreamCache_1 : DSE_StreamCache<0b01>;
++def DSE_StreamCache_2 : DSE_StreamCache<0b10>;
++def DSE_StreamCache_3 : DSE_StreamCache<0b11>;
++def DSE_StreamCache_NULL : DSE_StreamCache<0b00>;
++
++
++class DSE_indexStream<bits<1> indexS> {
++  bits<1> Value = indexS;
++}
++def DSE_indexS_false : DSE_indexStream<0b0>;
++def DSE_indexS_true  : DSE_indexStream<0b1>;
++def DSE_indexS_NULL  : DSE_indexStream<0b0>;
++
++
++//===----------------------------------------------------------------------===//
++// DSE Stream Instructions Class Formats
++//===----------------------------------------------------------------------===//
++class DSE_STREAM_HEADER<DSE_StreamType Stype, DSE_regtype regtype, 
++                        DSE_StreamDim eDim, DSE_Predicate pred,
++                        DSE_StreamCache cachelvl, DSE_indexStream indexS, 
++                        DSE_StreamWidth width, dag outs, dag ins, 
++                        string opcodestr, string argstr>
++    : RVInst<outs, ins, opcodestr, argstr, [], InstFormatR> {
++  bits<5> rs1;
++  bits<5> sd;
++
++  let Inst{31}    = indexS.Value;
++  let Inst{30-29} = Stype.Value;
++  let Inst{28-27} = cachelvl.Value;
++  let Inst{26-25} = regtype.Value;
++  let Inst{24-23} = eDim.Value;
++  let Inst{22}    = pred.Value;
++  let Inst{21-20} = width.Value;
++  let Inst{19-15} = rs1;
++  let Inst{14-13} = DSE_Instype_STA.Value;
++  let Inst{12}    = 0b0;
++  let Inst{11-7}  = sd;
++  let Opcode      = OPC_CUSTOM_0.Value;
++}
++
++class DSE_STREAM_DIM<DSE_regtype regtype, DSE_Instype instype, 
++                     dag outs, dag ins, 
++                     string opcodestr, string argstr>
++    : RVInst<outs, ins, opcodestr, argstr, [], InstFormatR> {
++  bits<5> rs3;
++  bits<5> rs2;
++  bits<5> rs1;
++  bits<5> sd;
++
++  let Inst{31-27} = rs3;
++  let Inst{26-25} = regtype.Value;
++  let Inst{24-20} = rs2;
++  let Inst{19-15} = rs1;
++  let Inst{14-13} = instype.Value;
++  let Inst{12}    = 0b0;
++  let Inst{11-7}  = sd;
++  let Opcode      = OPC_CUSTOM_0.Value;
++}
++
++//===----------------------------------------------------------------------===//
++// Branch Instruction Class Format
++//===----------------------------------------------------------------------===//
++class DSE_BRANCH<DSE_regtype regtype, bits<1> comp, DSE_StreamDim hop,
++                   dag outs, dag ins, string opcodestr, string argstr>
++    : RVInst<outs, ins, opcodestr, argstr, [], InstFormatB> {
++  bits<12> imm12;
++  // bits<5> compat; // Makes intruction compatible with current dissasembly, do not remove
++  bits<5> ss1;
++
++  let Inst{31}    = imm12{11};
++  let Inst{30-25} = imm12{9-4};
++  let Inst{24-23} = regtype.Value;
++  let Inst{22-21} = hop.Value;
++  let Inst{20}    = comp;
++  let Inst{19-15} = ss1;
++  let Inst{14-13} = DSE_Instype_CTRL.Value;
++  let Inst{12}    = 0b0;
++  let Inst{11-8}  = imm12{3-0};
++  let Inst{7}     = imm12{10};
++  let Opcode      = OPC_CUSTOM_0.Value;
++}
++
++
++//===----------------------------------------------------------------------===//
++// Control Instruction Class Formats
++//===----------------------------------------------------------------------===//
++
++class DSE_CONTROL<DSE_regtype regtype, bits<3> sctrltype, 
++                  dag outs, dag ins, string opcodestr, string argstr>
++    : RVInst<outs, ins, opcodestr, argstr, [], InstFormatR> {
++  bits<5> sd;
++
++  let Inst{31-25} = 0;
++  let Inst{24-23} = regtype.Value;
++  let Inst{22-20} = sctrltype;
++  let Inst{14-13} = DSE_Instype_CTRL.Value;
++  let Inst{12}    = 0b1;
++  let Inst{11-7}  = sd;
++  let Opcode = OPC_CUSTOM_0.Value;
++}
++
++class DSE_CONTROL_GLOBAL<DSE_regtype regtype, bits<3> sctrltype, 
++                         dag outs, dag ins, string opcodestr, string argstr>
++    : RVInst<outs, ins, opcodestr, argstr, [], InstFormatR> {
++
++  let Inst{31-25} = 0;
++  let Inst{24-23} = regtype.Value;
++  let Inst{22-20} = sctrltype;
++  let Inst{19-15} = 0;
++  let Inst{14-13} = DSE_Instype_CTRL.Value;
++  let Inst{12}    = 0b1;
++  let Inst{11-7}  = 0;
++  let Opcode = OPC_CUSTOM_0.Value;
++}
+diff --git a/llvm/lib/Target/RISCV/RISCVInstrInfo.td b/llvm/lib/Target/RISCV/RISCVInstrInfo.td
+index c699a94943d8..dcb6a862d916 100644
+--- a/llvm/lib/Target/RISCV/RISCVInstrInfo.td
++++ b/llvm/lib/Target/RISCV/RISCVInstrInfo.td
+@@ -1864,3 +1864,9 @@ include "RISCVInstrInfoZicbo.td"
+ 
+ include "RISCVInstrInfoXVentana.td"
+ include "RISCVInstrInfoXTHead.td"
++
++//===----------------------------------------------------------------------===//
++// Custom extensions
++//===----------------------------------------------------------------------===//
++
++include "RISCVInstrInfoDSE.td"
+\ No newline at end of file
+diff --git a/llvm/lib/Target/RISCV/RISCVInstrInfoDSE.td b/llvm/lib/Target/RISCV/RISCVInstrInfoDSE.td
+new file mode 100644
+index 000000000000..992ada75294f
+--- /dev/null
++++ b/llvm/lib/Target/RISCV/RISCVInstrInfoDSE.td
+@@ -0,0 +1,378 @@
++//===-- RISCVInstrInfoDSE.td - RISC-V 'DSE' instructions ---*- tablegen -*-===//
++//
++// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
++// See https://llvm.org/LICENSE.txt for license information.
++// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
++//
++//===----------------------------------------------------------------------===//
++///
++/// This file describes the RISC-V instructions from the custom 'DSE' data
++/// stream extension.
++///
++//===----------------------------------------------------------------------===//
++
++include "RISCVInstrFormatsDSE.td"
++
++//===----------------------------------------------------------------------===//
++// DSE Stream Start (header) Instruction class templates
++//===----------------------------------------------------------------------===//
++let hasSideEffects = 0, mayLoad = 1, mayStore = 1 in {
++
++// Integer
++class DSE_STREAM_HEADER_I<DSE_StreamType Stype, DSE_StreamWidth width,
++                        DSE_StreamCache cachelvl, DSE_indexStream indexS, 
++                        string opcodestr>
++      : DSE_STREAM_HEADER<Stype, DSE_regtype_I, DSE_StreamDim_NULL, 
++                          DSE_masked_NULL, cachelvl, indexS, width, 
++                          (outs GPR:$sd), (ins GPR:$rs1),
++                          opcodestr, "$sd, $rs1"> {
++  let Predicates = [HasCustomExtDSEI];
++}
++
++multiclass DSE_STREAM_HEADER_I_INDEX<DSE_StreamType Stype, 
++                                     DSE_StreamWidth width, 
++                                     DSE_StreamCache cachelvl, 
++                                     string opcodestr>{
++  def ""    : DSE_STREAM_HEADER_I<Stype, width, cachelvl, DSE_indexS_false, opcodestr>;
++  def _INDX : DSE_STREAM_HEADER_I<Stype, width, cachelvl, DSE_indexS_true, opcodestr # ".indx">;
++}
++
++multiclass DSE_STREAM_HEADER_I_CACHE<DSE_StreamType Stype, 
++                                     DSE_StreamWidth width,
++                                     string opcodestr>{
++  defm "" : DSE_STREAM_HEADER_I_INDEX<Stype, width, DSE_StreamCache_N, opcodestr>;
++  defm _1 : DSE_STREAM_HEADER_I_INDEX<Stype, width, DSE_StreamCache_1, opcodestr # ".lv1">;
++  defm _2 : DSE_STREAM_HEADER_I_INDEX<Stype, width, DSE_StreamCache_2, opcodestr # ".lv2">;
++  defm _3 : DSE_STREAM_HEADER_I_INDEX<Stype, width, DSE_StreamCache_3, opcodestr # ".lv3">;
++}
++
++multiclass DSE_STREAM_HEADER_I_WIDTH<DSE_StreamType Stype, string opcodestr>{
++  defm _B : DSE_STREAM_HEADER_I_CACHE<Stype, DSE_StreamWidth_B, opcodestr # ".b">;
++  defm _H : DSE_STREAM_HEADER_I_CACHE<Stype, DSE_StreamWidth_H, opcodestr # ".h">;
++  defm _W : DSE_STREAM_HEADER_I_CACHE<Stype, DSE_StreamWidth_W, opcodestr # ".w">;
++  defm _D : DSE_STREAM_HEADER_I_CACHE<Stype, DSE_StreamWidth_D, opcodestr # ".d">;
++}
++
++multiclass DSE_STREAM_HEADER_I_STYPE<string opcodestr>{
++  defm _LD : DSE_STREAM_HEADER_I_WIDTH<DSE_Stype_LD, opcodestr # ".ld">;
++  defm _ST : DSE_STREAM_HEADER_I_WIDTH<DSE_Stype_ST, opcodestr # ".st">;
++}
++
++// Floating-point
++class DSE_STREAM_HEADER_F<DSE_StreamType Stype, DSE_StreamWidth width,
++                        DSE_StreamCache cachelvl, string opcodestr>
++      : DSE_STREAM_HEADER<Stype, DSE_regtype_F, DSE_StreamDim_NULL, 
++                          DSE_masked_NULL, cachelvl, DSE_indexS_NULL, width, 
++                          (outs FPR32:$sd), (ins GPR:$rs1),
++                          opcodestr, "$sd, $rs1"> {
++  let Predicates = [HasCustomExtDSEF];
++}
++
++multiclass DSE_STREAM_HEADER_F_CACHE<DSE_StreamType Stype, 
++                                     DSE_StreamWidth width,
++                                     string opcodestr>{
++  def "" : DSE_STREAM_HEADER_F<Stype, width, DSE_StreamCache_N, opcodestr>;
++  def _1 : DSE_STREAM_HEADER_F<Stype, width, DSE_StreamCache_1, opcodestr # ".lv1">;
++  def _2 : DSE_STREAM_HEADER_F<Stype, width, DSE_StreamCache_2, opcodestr # ".lv2">;
++  def _3 : DSE_STREAM_HEADER_F<Stype, width, DSE_StreamCache_3, opcodestr # ".lv3">;
++}
++
++multiclass DSE_STREAM_HEADER_F_WIDTH<DSE_StreamType Stype, string opcodestr>{
++  defm _B : DSE_STREAM_HEADER_F_CACHE<Stype, DSE_StreamWidth_B, opcodestr # ".b">;
++  defm _H : DSE_STREAM_HEADER_F_CACHE<Stype, DSE_StreamWidth_H, opcodestr # ".h">;
++  defm _W : DSE_STREAM_HEADER_F_CACHE<Stype, DSE_StreamWidth_W, opcodestr # ".w">;
++  defm _D : DSE_STREAM_HEADER_F_CACHE<Stype, DSE_StreamWidth_D, opcodestr # ".d">;
++}
++
++multiclass DSE_STREAM_HEADER_F_STYPE<string opcodestr>{
++  defm _LD : DSE_STREAM_HEADER_F_WIDTH<DSE_Stype_LD, opcodestr # ".ld">;
++  defm _ST : DSE_STREAM_HEADER_F_WIDTH<DSE_Stype_ST, opcodestr # ".st">;
++}
++
++// Vector
++class DSE_STREAM_HEADER_V<DSE_StreamType Stype, DSE_StreamWidth width, 
++                        DSE_StreamDim vDim, DSE_Predicate pred,
++                        DSE_StreamCache cachelvl, DSE_indexStream indexS, 
++                        string opcodestr>
++      : DSE_STREAM_HEADER<Stype, DSE_regtype_V, vDim, pred, 
++                          cachelvl, indexS, width, 
++                          (outs VR:$sd), (ins GPR:$rs1),
++                          opcodestr, "$sd, $rs1"> {
++  let Predicates = [HasCustomExtDSEV];
++}
++
++multiclass DSE_STREAM_HEADER_V_INDEX<DSE_StreamType Stype, DSE_StreamWidth width,
++                                DSE_StreamDim vDim, DSE_Predicate Spred,
++                                DSE_StreamCache cachelvl, string opcodestr>{
++  def ""    : DSE_STREAM_HEADER_V<Stype, width, vDim, Spred, cachelvl, DSE_indexS_false, opcodestr>;
++  def _INDX : DSE_STREAM_HEADER_V<Stype, width, vDim, Spred, cachelvl, DSE_indexS_true, opcodestr # ".indx">;
++}
++
++multiclass DSE_STREAM_HEADER_V_CACHE<DSE_StreamType Stype, DSE_StreamWidth width, 
++                                  DSE_StreamDim vDim, DSE_Predicate Spred,
++                                  string opcodestr>{
++  defm "" : DSE_STREAM_HEADER_V_INDEX<Stype, width, vDim, Spred, DSE_StreamCache_N, opcodestr>;
++  defm _1 : DSE_STREAM_HEADER_V_INDEX<Stype, width, vDim, Spred, DSE_StreamCache_1, opcodestr # ".lv1">;
++  defm _2 : DSE_STREAM_HEADER_V_INDEX<Stype, width, vDim, Spred, DSE_StreamCache_2, opcodestr # ".lv2">;
++  defm _3 : DSE_STREAM_HEADER_V_INDEX<Stype, width, vDim, Spred, DSE_StreamCache_3, opcodestr # ".lv3">;
++}
++
++multiclass DSE_STREAM_HEADER_V_PRED<DSE_StreamType Stype, DSE_StreamWidth width, 
++                                  DSE_StreamDim vDim, string opcodestr>{
++  defm _M   : DSE_STREAM_HEADER_V_CACHE<Stype, width, vDim, DSE_masked, opcodestr>;
++  defm _UNM : DSE_STREAM_HEADER_V_CACHE<Stype, width, vDim, DSE_unmasked, opcodestr # ".unm">;
++}
++
++multiclass DSE_STREAM_HEADER_VDIM<DSE_StreamType Stype, DSE_StreamWidth width, 
++                                        string opcodestr>{
++  defm _1 : DSE_STREAM_HEADER_V_PRED<Stype, width, DSE_StreamDim_1, opcodestr # ".1">;
++  defm _2 : DSE_STREAM_HEADER_V_PRED<Stype, width, DSE_StreamDim_2, opcodestr # ".2">;
++  defm _3 : DSE_STREAM_HEADER_V_PRED<Stype, width, DSE_StreamDim_3, opcodestr # ".3">;
++  defm _L : DSE_STREAM_HEADER_V_PRED<Stype, width, DSE_StreamDim_4, opcodestr>;
++}
++
++multiclass DSE_STREAM_HEADER_V_WIDTH<DSE_StreamType Stype, string opcodestr>{
++  defm _B : DSE_STREAM_HEADER_VDIM<Stype, DSE_StreamWidth_B, opcodestr # ".b">;
++  defm _H : DSE_STREAM_HEADER_VDIM<Stype, DSE_StreamWidth_H, opcodestr # ".h">;
++  defm _W : DSE_STREAM_HEADER_VDIM<Stype, DSE_StreamWidth_W, opcodestr # ".w">;
++  defm _D : DSE_STREAM_HEADER_VDIM<Stype, DSE_StreamWidth_D, opcodestr # ".d">;
++}
++
++multiclass DSE_STREAM_HEADER_V_STYPE<string opcodestr>{
++  defm _LD : DSE_STREAM_HEADER_V_WIDTH<DSE_Stype_LD, opcodestr # ".ld">;
++  defm _ST : DSE_STREAM_HEADER_V_WIDTH<DSE_Stype_ST, opcodestr # ".st">;
++}
++
++}
++
++//===----------------------------------------------------------------------===//
++// DSE Stream Start (header) Instructions
++//===----------------------------------------------------------------------===//
++// Integer
++defm DSE_STREAM_STA_I     : DSE_STREAM_HEADER_I_STYPE<"ss.sta.i">;
++// Floating-point
++defm DSE_STREAM_STA_F     : DSE_STREAM_HEADER_F_STYPE<"ss.sta.f">;
++// Vector
++defm DSE_STREAM_STA_V     : DSE_STREAM_HEADER_V_STYPE<"ss.sta.v">;
++
++//===----------------------------------------------------------------------===//
++// DSE Stream Append/End Instruction class templates
++//===----------------------------------------------------------------------===//
++
++let hasSideEffects = 0, mayLoad = 1, mayStore = 1 in {
++
++// Integer
++class DSE_STREAM_DIM_I<DSE_Instype type, string opcodestr>
++      : DSE_STREAM_DIM<DSE_regtype_I, type, (outs GPR:$sd), 
++                        (ins GPR:$rs1, GPR:$rs2, GPR:$rs3),
++              opcodestr, "$sd, $rs1, $rs2, $rs3"> {
++  let Predicates = [HasCustomExtDSEI];
++}
++
++// Floating-point
++class DSE_STREAM_DIM_F<DSE_Instype type, string opcodestr>
++      : DSE_STREAM_DIM<DSE_regtype_F, type, (outs FPR32:$sd), 
++                        (ins GPR:$rs1, GPR:$rs2, GPR:$rs3),
++              opcodestr, "$sd, $rs1, $rs2, $rs3"> {
++  let Predicates = [HasCustomExtDSEF];
++}
++
++// Vector
++class DSE_STREAM_DIM_V<DSE_Instype type, string opcodestr>
++      : DSE_STREAM_DIM<DSE_regtype_V, type, (outs VR:$sd), 
++                        (ins GPR:$rs1, GPR:$rs2, GPR:$rs3),
++              opcodestr, "$sd, $rs1, $rs2, $rs3"> {
++  let Predicates = [HasCustomExtDSEV];
++}
++
++}
++
++//===----------------------------------------------------------------------===//
++// DSE Stream Append/End Instructions
++//===----------------------------------------------------------------------===//
++// Integer
++def DSE_STREAM_APP_I : DSE_STREAM_DIM_I<DSE_Instype_APP, "ss.app.i">;
++def DSE_STREAM_END_I : DSE_STREAM_DIM_I<DSE_Instype_END, "ss.end.i">;
++// Floating-point
++def DSE_STREAM_APP_F : DSE_STREAM_DIM_F<DSE_Instype_APP, "ss.app.f">;
++def DSE_STREAM_END_F : DSE_STREAM_DIM_F<DSE_Instype_END, "ss.end.f">;
++// Vector
++def DSE_STREAM_APP_V : DSE_STREAM_DIM_V<DSE_Instype_APP, "ss.app.v">;
++def DSE_STREAM_END_V : DSE_STREAM_DIM_V<DSE_Instype_END, "ss.end.v">;
++
++//===----------------------------------------------------------------------===//
++// DSE Branch Instruction class templates
++//===----------------------------------------------------------------------===//
++
++let hasSideEffects = 0, mayLoad = 0, mayStore = 0 in {
++
++// Integer
++class DSE_BRANCH_I<DSE_StreamDim hop, bits<1> comp, string mnemonic>
++    : DSE_BRANCH<DSE_regtype_I, comp, hop, (outs),
++                 (ins GPR:$ss1, simm13_lsb0:$imm12),
++                 mnemonic, "$ss1, $imm12">,
++      Sched<[WriteJmp, ReadJmp, ReadJmp]> {
++  let Predicates   = [HasCustomExtDSEI, HasCustomExtDSEBR];
++  let isBranch     = 1;
++  let isTerminator = 1;
++}
++
++multiclass DSE_BRANCH_HOP_I<bits<1> comp, string mnemonic> {
++  def _1 : DSE_BRANCH_I<DSE_StreamDim_1, comp, mnemonic # "c">;
++  def _2 : DSE_BRANCH_I<DSE_StreamDim_2, comp, mnemonic # "dc.2">;
++  def _3 : DSE_BRANCH_I<DSE_StreamDim_3, comp, mnemonic # "dc.3">;
++  def _4 : DSE_BRANCH_I<DSE_StreamDim_4, comp, mnemonic # "dc.4">;
++}
++
++multiclass DSE_BRANCH_HOP_COMPLETE_I<string mnemonic> {
++  defm _COMP : DSE_BRANCH_HOP_I<0b0, mnemonic # ".">;
++  defm _NCMP : DSE_BRANCH_HOP_I<0b1, mnemonic # ".n">;
++}
++
++
++// Floating-point
++class DSE_BRANCH_F<DSE_StreamDim hop, bits<1> comp, string mnemonic>
++    : DSE_BRANCH<DSE_regtype_F, comp, hop, (outs),
++                 (ins FPR32:$ss1, simm13_lsb0:$imm12),
++                 mnemonic, "$ss1, $imm12">,
++      Sched<[WriteJmp, ReadJmp, ReadJmp]> {
++  let Predicates   = [HasCustomExtDSEF, HasCustomExtDSEBR];
++  let isBranch     = 1;
++  let isTerminator = 1;
++}
++
++multiclass DSE_BRANCH_HOP_F<bits<1> comp, string mnemonic> {
++  def _1 : DSE_BRANCH_F<DSE_StreamDim_1, comp, mnemonic # "c">;
++  def _2 : DSE_BRANCH_F<DSE_StreamDim_2, comp, mnemonic # "dc.2">;
++  def _3 : DSE_BRANCH_F<DSE_StreamDim_3, comp, mnemonic # "dc.3">;
++  def _4 : DSE_BRANCH_F<DSE_StreamDim_4, comp, mnemonic # "dc.4">;
++}
++
++multiclass DSE_BRANCH_HOP_COMPLETE_F<string mnemonic> {
++  defm _COMP : DSE_BRANCH_HOP_F<0b0, mnemonic # ".">;
++  defm _NCMP : DSE_BRANCH_HOP_F<0b1, mnemonic # ".n">;
++}
++
++// Vector
++class DSE_BRANCH_V<DSE_StreamDim hop, bits<1> comp, string mnemonic>
++    : DSE_BRANCH<DSE_regtype_V, comp, hop, (outs),
++                 (ins VR:$ss1, simm13_lsb0:$imm12),
++                 mnemonic, "$ss1, $imm12">,
++      Sched<[WriteJmp, ReadJmp, ReadJmp]> {
++  let Predicates   = [HasCustomExtDSEV, HasCustomExtDSEBR];
++  let isBranch     = 1;
++  let isTerminator = 1;
++}
++
++multiclass DSE_BRANCH_HOP_V<bits<1> comp, string mnemonic> {
++  def _1 : DSE_BRANCH_V<DSE_StreamDim_1, comp, mnemonic # "c">;
++  def _2 : DSE_BRANCH_V<DSE_StreamDim_2, comp, mnemonic # "dc.2">;
++  def _3 : DSE_BRANCH_V<DSE_StreamDim_3, comp, mnemonic # "dc.3">;
++  def _4 : DSE_BRANCH_V<DSE_StreamDim_4, comp, mnemonic # "dc.4">;
++}
++
++multiclass DSE_BRANCH_HOP_COMPLETE_V<string mnemonic> {
++  defm _COMP : DSE_BRANCH_HOP_V<0b0, mnemonic # ".">;
++  defm _NCMP : DSE_BRANCH_HOP_V<0b1, mnemonic # ".n">;
++}
++
++} // let hasSideEffects = 0, mayLoad = 0, mayStore = 0
++
++
++//===----------------------------------------------------------------------===//
++// DSE Branch Instructions
++//===----------------------------------------------------------------------===//
++// Integer
++defm DSE_BRANCH_I : DSE_BRANCH_HOP_COMPLETE_I<"ss.b.i">;
++// Floating-point
++defm DSE_BRANCH_F : DSE_BRANCH_HOP_COMPLETE_F<"ss.b.f">;
++// Vector
++defm DSE_BRANCH_V : DSE_BRANCH_HOP_COMPLETE_V<"ss.b.v">;
++
++
++//===----------------------------------------------------------------------===//
++// DSE Control class templates
++//===----------------------------------------------------------------------===//
++
++let hasSideEffects = 0, mayLoad = 0, mayStore = 0 in {
++
++class DSE_CONTROL_I<bits<3> sctrltype, string opcodestr>
++    : DSE_CONTROL<DSE_regtype_I, sctrltype, (outs GPR:$sd),
++                  (ins), opcodestr, "$sd"> {
++  let Predicates = [HasCustomExtDSEI];
++}
++
++class DSE_CONTROL_F<bits<3> sctrltype, string opcodestr>
++    : DSE_CONTROL<DSE_regtype_F, sctrltype, (outs FPR32:$sd),
++                  (ins), opcodestr, "$sd"> {
++  let Predicates = [HasCustomExtDSEF];
++}
++
++class DSE_CONTROL_V<bits<3> sctrltype, string opcodestr>
++    : DSE_CONTROL<DSE_regtype_V, sctrltype, (outs VR:$sd),
++                  (ins), opcodestr, "$sd"> {
++  let Predicates = [HasCustomExtDSEV];
++}
++
++class DSE_CONTROL_GLOBAL_I<bits<3> sctrltype, string opcodestr>
++    : DSE_CONTROL_GLOBAL<DSE_regtype_I, sctrltype, (outs),
++                         (ins), opcodestr, ""> {
++  let Predicates = [HasCustomExtDSEI];
++}
++
++class DSE_CONTROL_GLOBAL_F<bits<3> sctrltype, string opcodestr>
++    : DSE_CONTROL_GLOBAL<DSE_regtype_F, sctrltype, (outs),
++                         (ins), opcodestr, ""> {
++  let Predicates = [HasCustomExtDSEF];
++}
++
++class DSE_CONTROL_GLOBAL_V<bits<3> sctrltype, string opcodestr>
++    : DSE_CONTROL_GLOBAL<DSE_regtype_V, sctrltype, (outs),
++                         (ins), opcodestr, ""> {
++  let Predicates = [HasCustomExtDSEV];
++}
++} // let hasSideEffects = 0, mayLoad = 0, mayStore = 0
++
++//===----------------------------------------------------------------------===//
++// DSE Control Instructions
++//===----------------------------------------------------------------------===//
++// Integer
++def DSE_CONTROL_SUSPD_I : DSE_CONTROL_I<0b000, "ss.c.suspd.i">;
++def DSE_CONTROL_RESUM_I : DSE_CONTROL_I<0b001, "ss.c.resum.i">;
++def DSE_CONTROL_BREAK_I : DSE_CONTROL_I<0b010, "ss.c.break.i">;
++def DSE_CONTROL_LOAD_I  : DSE_CONTROL_I<0b101, "ss.c.load.i">;
++def DSE_CONTROL_STORE_I : DSE_CONTROL_I<0b110, "ss.c.store.i">;
++
++def DSE_CONTROL_BREAKALL_I
++    : DSE_CONTROL_GLOBAL_I<0b011, "ss.c.breakall.i">;
++
++// Floating-point
++def DSE_CONTROL_SUSPD_F : DSE_CONTROL_F<0b000, "ss.c.suspd.f">;
++def DSE_CONTROL_RESUM_F : DSE_CONTROL_F<0b001, "ss.c.resum.f">;
++def DSE_CONTROL_BREAK_F : DSE_CONTROL_F<0b010, "ss.c.break.f">;
++def DSE_CONTROL_LOAD_F  : DSE_CONTROL_F<0b101, "ss.c.load.f">;
++def DSE_CONTROL_STORE_F : DSE_CONTROL_F<0b110, "ss.c.store.f">;
++
++def DSE_CONTROL_BREAKALL_F
++    : DSE_CONTROL_GLOBAL_F<0b011, "ss.c.breakall.f">;
++
++
++// Vector
++def DSE_CONTROL_SUSPD_V : DSE_CONTROL_V<0b000, "ss.c.suspd.v">;
++def DSE_CONTROL_RESUM_V : DSE_CONTROL_V<0b001, "ss.c.resum.v">;
++def DSE_CONTROL_BREAK_V : DSE_CONTROL_V<0b010, "ss.c.break.v">;
++def DSE_CONTROL_LOAD_V  : DSE_CONTROL_V<0b101, "ss.c.load.v">;
++def DSE_CONTROL_STORE_V : DSE_CONTROL_V<0b110, "ss.c.store.v">;
++
++def DSE_CONTROL_BREAKALL_V
++    : DSE_CONTROL_GLOBAL_V<0b011, "ss.c.breakall.v">;
++
++// All streams
++let hasSideEffects = 0, mayLoad = 0, mayStore = 0 in {
++def DSE_CONTROL_BREAKALL
++    : DSE_CONTROL_GLOBAL<DSE_regtype_NULL, 0b100,
++                         (outs), (ins),
++                         "ss.c.breakall", ""> {
++  let Predicates = [HasCustomExtDSE];
++}
++}
+\ No newline at end of file
