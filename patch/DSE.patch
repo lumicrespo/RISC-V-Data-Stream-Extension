@@ -115,10 +115,10 @@ index be8834fd4c2f..766ae849bed6 100644
                         "'Zvfh' (Vector Half-Precision Floating-Point)",
 diff --git a/llvm/lib/Target/RISCV/RISCVInstrFormatsDSE.td b/llvm/lib/Target/RISCV/RISCVInstrFormatsDSE.td
 new file mode 100644
-index 000000000000..190b552e1e55
+index 000000000000..3f3f04fe6a99
 --- /dev/null
 +++ b/llvm/lib/Target/RISCV/RISCVInstrFormatsDSE.td
-@@ -0,0 +1,189 @@
+@@ -0,0 +1,239 @@
 +//===-- RISCVInstrFormatsDSE.td - RISCV DSE Instruction Formats --*- tablegen -*-=//
 +//
 +// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
@@ -208,6 +208,35 @@ index 000000000000..190b552e1e55
 +def DSE_indexS_NULL  : DSE_indexStream<0b0>;
 +
 +
++class DSE_ModiferTarget<bits<2> mtarget> {
++  bits<2> Value = mtarget;
++}
++
++def DSE_ModiferTarget_SIZE   : DSE_ModiferTarget<0b00>;
++def DSE_ModiferTarget_STRIDE : DSE_ModiferTarget<0b01>;
++def DSE_ModiferTarget_OFFSET : DSE_ModiferTarget<0b10>;
++def DSE_ModiferTarget_NULL   : DSE_ModiferTarget<0b00>;
++
++
++class DSE_ModifierBehaviour<bits<3> behaviour> {
++  bits<3> Value = behaviour;
++}
++
++def DSE_ModifierBehaviour_INC  : DSE_ModifierBehaviour<0b000>;
++def DSE_ModifierBehaviour_DEC  : DSE_ModifierBehaviour<0b001>;
++def DSE_ModifierBehaviour_ADD  : DSE_ModifierBehaviour<0b010>;
++def DSE_ModifierBehaviour_SUB  : DSE_ModifierBehaviour<0b011>;
++def DSE_ModifierBehaviour_SET  : DSE_ModifierBehaviour<0b100>;
++// def DSE_ModifierBehaviour_NULL : DSE_ModifierBehaviour<0b000>;
++
++class DSE_ModiferType<bits<2> mtype> {
++  bits<2> Value = mtype;
++}
++
++def DSE_ModiferType_SMOD : DSE_ModiferType<0b00>;
++def DSE_ModiferType_DMOD : DSE_ModiferType<0b01>;
++def DSE_ModiferType_NULL : DSE_ModiferType<0b00>;
++
 +//===----------------------------------------------------------------------===//
 +// DSE Stream Instructions Class Formats
 +//===----------------------------------------------------------------------===//
@@ -249,6 +278,27 @@ index 000000000000..190b552e1e55
 +  let Inst{19-15} = rs1;
 +  let Inst{14-13} = instype.Value;
 +  let Inst{12}    = 0b0;
++  let Inst{11-7}  = sd;
++  let Opcode      = OPC_CUSTOM_0.Value;
++}
++
++class DSE_STREAM_MOD<DSE_Instype instype, DSE_ModiferType mtype, DSE_regtype regtype, 
++                     DSE_ModiferTarget target, DSE_ModifierBehaviour behaviour,
++                     DSE_StreamDim tDim, dag outs, dag ins,
++                     string opcodestr, string argstr>
++    : RVInst<outs, ins, opcodestr, argstr, [], InstFormatR> {
++  bits<5> ss1;
++  bits<5> sd;
++
++  let Inst{31-30} = mtype.Value;
++  let Inst{29-28} = tDim.Value;
++  let Inst{27}    = 0b0;
++  let Inst{26-25} = regtype.Value;
++  let Inst{24-22} = behaviour.Value;
++  let Inst{21-20} = target.Value;
++  let Inst{19-15} = ss1;
++  let Inst{14-13} = instype.Value;
++  let Inst{12}    = 0b1;
 +  let Inst{11-7}  = sd;
 +  let Opcode      = OPC_CUSTOM_0.Value;
 +}
@@ -325,10 +375,10 @@ index c699a94943d8..dcb6a862d916 100644
 \ No newline at end of file
 diff --git a/llvm/lib/Target/RISCV/RISCVInstrInfoDSE.td b/llvm/lib/Target/RISCV/RISCVInstrInfoDSE.td
 new file mode 100644
-index 000000000000..992ada75294f
+index 000000000000..deda162d5ec2
 --- /dev/null
 +++ b/llvm/lib/Target/RISCV/RISCVInstrInfoDSE.td
-@@ -0,0 +1,378 @@
+@@ -0,0 +1,670 @@
 +//===-- RISCVInstrInfoDSE.td - RISC-V 'DSE' instructions ---*- tablegen -*-===//
 +//
 +// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
@@ -530,6 +580,298 @@ index 000000000000..992ada75294f
 +// Vector
 +def DSE_STREAM_APP_V : DSE_STREAM_DIM_V<DSE_Instype_APP, "ss.app.v">;
 +def DSE_STREAM_END_V : DSE_STREAM_DIM_V<DSE_Instype_END, "ss.end.v">;
++
++
++//===----------------------------------------------------------------------===//
++// DSE Static Modifier Instruction class templates
++//===----------------------------------------------------------------------===//
++
++let hasSideEffects = 0, mayLoad = 1, mayStore = 1 in {
++
++// Integer
++class DSE_STREAM_S_MOD_I<DSE_StreamDim tDim, DSE_ModifierBehaviour behaviour,
++                        DSE_ModiferTarget target, string opcodestr>
++      : DSE_STREAM_MOD<DSE_Instype_APP, DSE_ModiferType_SMOD, DSE_regtype_I,
++                       target, behaviour, tDim,
++                      (outs GPR:$sd), (ins GPR:$ss1),
++                      opcodestr, "$sd, $ss1"> {
++  let Predicates = [HasCustomExtDSEI, HasCustomExtDSEMODS];
++}
++
++multiclass DSE_STREAM_SMOD_DTARGET_I<DSE_ModifierBehaviour behaviour,
++                                     DSE_ModiferTarget target,
++                                     string opcodestr>{
++  def _1     : DSE_STREAM_S_MOD_I<DSE_StreamDim_1, behaviour, target, opcodestr # ".1">;
++  def _2     : DSE_STREAM_S_MOD_I<DSE_StreamDim_2, behaviour, target, opcodestr # ".2">;
++  def _3     : DSE_STREAM_S_MOD_I<DSE_StreamDim_3, behaviour, target, opcodestr # ".3">;
++  def _L     : DSE_STREAM_S_MOD_I<DSE_StreamDim_4, behaviour, target, opcodestr # ".l">;
++}
++
++multiclass DSE_STREAM_SMOD_BEHAVIOUR_I<DSE_ModiferTarget target, string opcodestr>{
++  defm _INC : DSE_STREAM_SMOD_DTARGET_I< DSE_ModifierBehaviour_INC, target, opcodestr # ".inc">;
++  defm _DEC : DSE_STREAM_SMOD_DTARGET_I< DSE_ModifierBehaviour_DEC, target, opcodestr # ".dec">;
++}
++
++multiclass DSE_STREAM_SMOD_TARGET_I<string opcodestr>{
++  defm _OFS : DSE_STREAM_SMOD_BEHAVIOUR_I<DSE_ModiferTarget_OFFSET, opcodestr # ".ofs">;
++  defm _STR : DSE_STREAM_SMOD_BEHAVIOUR_I<DSE_ModiferTarget_STRIDE, opcodestr # ".str">;
++  defm _SIZ : DSE_STREAM_SMOD_BEHAVIOUR_I<DSE_ModiferTarget_SIZE  , opcodestr # ".siz">;
++}
++
++// Floating-point
++class DSE_STREAM_S_MOD_F<DSE_StreamDim tDim, DSE_ModifierBehaviour behaviour,
++                        DSE_ModiferTarget target, string opcodestr>
++      : DSE_STREAM_MOD<DSE_Instype_APP, DSE_ModiferType_SMOD, DSE_regtype_F, 
++                       target, behaviour, tDim,
++                       (outs FPR32:$sd), (ins GPR:$ss1),
++                       opcodestr, "$sd, $ss1"> {
++  let Predicates = [HasCustomExtDSEF, HasCustomExtDSEMODS];
++}
++
++multiclass DSE_STREAM_SMOD_DTARGET_F<DSE_ModifierBehaviour behaviour,
++                                     DSE_ModiferTarget target,
++                                     string opcodestr>{
++  def _1     : DSE_STREAM_S_MOD_F<DSE_StreamDim_1, behaviour, target, opcodestr # ".1">;
++  def _2     : DSE_STREAM_S_MOD_F<DSE_StreamDim_2, behaviour, target, opcodestr # ".2">;
++  def _3     : DSE_STREAM_S_MOD_F<DSE_StreamDim_3, behaviour, target, opcodestr # ".3">;
++  def _L     : DSE_STREAM_S_MOD_F<DSE_StreamDim_4, behaviour, target, opcodestr # ".l">;
++}
++
++multiclass DSE_STREAM_SMOD_BEHAVIOUR_F<DSE_ModiferTarget target, string opcodestr>{
++  defm _INC : DSE_STREAM_SMOD_DTARGET_F< DSE_ModifierBehaviour_INC, target, opcodestr # ".inc">;
++  defm _DEC : DSE_STREAM_SMOD_DTARGET_F< DSE_ModifierBehaviour_DEC, target, opcodestr # ".dec">;
++}
++
++multiclass DSE_STREAM_SMOD_TARGET_F<string opcodestr>{
++  defm _OFS : DSE_STREAM_SMOD_BEHAVIOUR_F<DSE_ModiferTarget_OFFSET, opcodestr # ".ofs">;
++  defm _STR : DSE_STREAM_SMOD_BEHAVIOUR_F<DSE_ModiferTarget_STRIDE, opcodestr # ".str">;
++  defm _SIZ : DSE_STREAM_SMOD_BEHAVIOUR_F<DSE_ModiferTarget_SIZE  , opcodestr # ".siz">;
++}
++
++// Vector
++class DSE_STREAM_S_MOD_V<DSE_StreamDim tDim, DSE_ModifierBehaviour behaviour,
++                        DSE_ModiferTarget target, string opcodestr>
++      : DSE_STREAM_MOD<DSE_Instype_APP, DSE_ModiferType_SMOD, DSE_regtype_V, 
++                       target, behaviour, tDim,
++                       (outs VR:$sd), (ins GPR:$ss1),
++                       opcodestr, "$sd, $ss1"> {
++  let Predicates = [HasCustomExtDSEV, HasCustomExtDSEMODS];
++}
++
++multiclass DSE_STREAM_SMOD_DTARGET_V<DSE_ModifierBehaviour behaviour,
++                                     DSE_ModiferTarget target,
++                                     string opcodestr>{
++  def _1 : DSE_STREAM_S_MOD_V<DSE_StreamDim_1, behaviour, target, opcodestr # ".1">;
++  def _2 : DSE_STREAM_S_MOD_V<DSE_StreamDim_2, behaviour, target, opcodestr # ".2">;
++  def _3 : DSE_STREAM_S_MOD_V<DSE_StreamDim_3, behaviour, target, opcodestr # ".3">;
++  def _L : DSE_STREAM_S_MOD_V<DSE_StreamDim_4, behaviour, target, opcodestr # ".l">;
++}
++
++multiclass DSE_STREAM_SMOD_BEHAVIOUR_V<DSE_ModiferTarget target, string opcodestr>{
++  defm _INC : DSE_STREAM_SMOD_DTARGET_V< DSE_ModifierBehaviour_INC, target, opcodestr # ".inc">;
++  defm _DEC : DSE_STREAM_SMOD_DTARGET_V< DSE_ModifierBehaviour_DEC, target, opcodestr # ".dec">;
++}
++
++multiclass DSE_STREAM_SMOD_TARGET_V<string opcodestr>{
++  defm _OFS : DSE_STREAM_SMOD_BEHAVIOUR_V<DSE_ModiferTarget_OFFSET, opcodestr # ".ofs">;
++  defm _STR : DSE_STREAM_SMOD_BEHAVIOUR_V<DSE_ModiferTarget_STRIDE, opcodestr # ".str">;
++  defm _SIZ : DSE_STREAM_SMOD_BEHAVIOUR_V<DSE_ModiferTarget_SIZE  , opcodestr # ".siz">;
++}
++
++}
++
++//===----------------------------------------------------------------------===//
++// DSE Static Modifier Instructions
++//===----------------------------------------------------------------------===//
++// Integer
++defm DSE_STREAM_SMOD_I : DSE_STREAM_SMOD_TARGET_I<"ss.app.i.mod">;
++// Floating-point
++defm DSE_STREAM_SMOD_F : DSE_STREAM_SMOD_TARGET_F<"ss.app.f.mod">;
++// Vector
++defm DSE_STREAM_SMOD_V : DSE_STREAM_SMOD_TARGET_V<"ss.app.v.mod">;
++
++
++//===----------------------------------------------------------------------===//
++// DSE Dynamic Modifiers Instruction class templates
++//===----------------------------------------------------------------------===//
++
++let hasSideEffects = 0, mayLoad = 1, mayStore = 1 in {
++
++// Integer
++class DSE_STREAM_D_MOD_I<DSE_StreamDim tDim, DSE_ModifierBehaviour behaviour,
++                        DSE_ModiferTarget target, string opcodestr>
++      : DSE_STREAM_MOD<DSE_Instype_APP, DSE_ModiferType_DMOD, DSE_regtype_I, 
++                       target, behaviour, tDim,
++                       (outs GPR:$sd), (ins GPR:$ss1),
++                       opcodestr, "$sd, $ss1"> {
++  let Predicates = [HasCustomExtDSEI, HasCustomExtDSEMODI];
++}
++
++multiclass DSE_STREAM_DMOD_DTARGET_I<DSE_ModifierBehaviour behaviour, DSE_ModiferTarget target, string opcodestr>{
++  def _1 : DSE_STREAM_D_MOD_I<DSE_StreamDim_1, behaviour, target, opcodestr # ".1">;
++  def _2 : DSE_STREAM_D_MOD_I<DSE_StreamDim_2, behaviour, target, opcodestr # ".2">;
++  def _3 : DSE_STREAM_D_MOD_I<DSE_StreamDim_3, behaviour, target, opcodestr # ".3">;
++  def _L : DSE_STREAM_D_MOD_I<DSE_StreamDim_4, behaviour, target, opcodestr # ".l">;
++}
++
++multiclass DSE_STREAM_DMOD_BEHAVIOUR_I<DSE_ModiferTarget target, string opcodestr>{
++  defm _INC : DSE_STREAM_DMOD_DTARGET_I<DSE_ModifierBehaviour_INC, target, opcodestr # ".inc">;
++  defm _DEC : DSE_STREAM_DMOD_DTARGET_I<DSE_ModifierBehaviour_DEC, target, opcodestr # ".dec">;
++  defm _ADD : DSE_STREAM_DMOD_DTARGET_I<DSE_ModifierBehaviour_ADD, target, opcodestr # ".add">;
++  defm _SUB : DSE_STREAM_DMOD_DTARGET_I<DSE_ModifierBehaviour_SUB, target, opcodestr # ".sub">;
++  defm _SET : DSE_STREAM_DMOD_DTARGET_I<DSE_ModifierBehaviour_SET, target, opcodestr # ".set">;
++}
++
++multiclass DSE_STREAM_DMOD_TARGET_I<string opcodestr>{
++  defm _OFS : DSE_STREAM_DMOD_BEHAVIOUR_I<DSE_ModiferTarget_OFFSET, opcodestr # ".ofs">;
++  defm _STR : DSE_STREAM_DMOD_BEHAVIOUR_I<DSE_ModiferTarget_STRIDE, opcodestr # ".str">;
++  defm _SIZ : DSE_STREAM_DMOD_BEHAVIOUR_I<DSE_ModiferTarget_SIZE  , opcodestr # ".siz">;
++}
++
++// Floating-point
++class DSE_STREAM_D_MOD_F<DSE_StreamDim tDim, DSE_ModifierBehaviour behaviour,
++                        DSE_ModiferTarget target, string opcodestr>
++      : DSE_STREAM_MOD<DSE_Instype_APP, DSE_ModiferType_DMOD, DSE_regtype_F, 
++                       target, behaviour, tDim,
++                       (outs FPR32:$sd), (ins GPR:$ss1),
++                       opcodestr, "$sd, $ss1"> {
++  let Predicates = [HasCustomExtDSEF, HasCustomExtDSEMODI];
++}
++
++multiclass DSE_STREAM_DMOD_DTARGET_F<DSE_ModifierBehaviour behaviour, DSE_ModiferTarget target, string opcodestr>{
++  def _1 : DSE_STREAM_D_MOD_F<DSE_StreamDim_1, behaviour, target, opcodestr # ".1">;
++  def _2 : DSE_STREAM_D_MOD_F<DSE_StreamDim_2, behaviour, target, opcodestr # ".2">;
++  def _3 : DSE_STREAM_D_MOD_F<DSE_StreamDim_3, behaviour, target, opcodestr # ".3">;
++  def _L : DSE_STREAM_D_MOD_F<DSE_StreamDim_4, behaviour, target, opcodestr # ".l">;
++}
++
++multiclass DSE_STREAM_DMOD_BEHAVIOUR_F<DSE_ModiferTarget target, string opcodestr>{
++  defm _INC : DSE_STREAM_DMOD_DTARGET_F<DSE_ModifierBehaviour_INC, target, opcodestr # ".inc">;
++  defm _DEC : DSE_STREAM_DMOD_DTARGET_F<DSE_ModifierBehaviour_DEC, target, opcodestr # ".dec">;
++  defm _ADD : DSE_STREAM_DMOD_DTARGET_F<DSE_ModifierBehaviour_ADD, target, opcodestr # ".add">;
++  defm _SUB : DSE_STREAM_DMOD_DTARGET_F<DSE_ModifierBehaviour_SUB, target, opcodestr # ".sub">;
++  defm _SET : DSE_STREAM_DMOD_DTARGET_F<DSE_ModifierBehaviour_SET, target, opcodestr # ".set">;
++}
++
++multiclass DSE_STREAM_DMOD_TARGET_F<string opcodestr>{
++  defm _OFS : DSE_STREAM_DMOD_BEHAVIOUR_F<DSE_ModiferTarget_OFFSET, opcodestr # ".ofs">;
++  defm _STR : DSE_STREAM_DMOD_BEHAVIOUR_F<DSE_ModiferTarget_STRIDE, opcodestr # ".str">;
++  defm _SIZ : DSE_STREAM_DMOD_BEHAVIOUR_F<DSE_ModiferTarget_SIZE  , opcodestr # ".siz">;
++}
++
++// Vector
++class DSE_STREAM_D_MOD_V<DSE_StreamDim tDim, DSE_ModifierBehaviour behaviour,
++                        DSE_ModiferTarget target, string opcodestr>
++      : DSE_STREAM_MOD<DSE_Instype_APP, DSE_ModiferType_DMOD, DSE_regtype_V, 
++                       target, behaviour, tDim,
++                       (outs VR:$sd), (ins GPR:$ss1),
++                       opcodestr, "$sd, $ss1"> {
++  let Predicates = [HasCustomExtDSEV, HasCustomExtDSEMODI];
++}
++
++multiclass DSE_STREAM_DMOD_DTARGET_V<DSE_ModifierBehaviour behaviour, DSE_ModiferTarget target, string opcodestr>{
++  def _1 : DSE_STREAM_D_MOD_V<DSE_StreamDim_1, behaviour, target, opcodestr # ".1">;
++  def _2 : DSE_STREAM_D_MOD_V<DSE_StreamDim_2, behaviour, target, opcodestr # ".2">;
++  def _3 : DSE_STREAM_D_MOD_V<DSE_StreamDim_3, behaviour, target, opcodestr # ".3">;
++  def _L : DSE_STREAM_D_MOD_V<DSE_StreamDim_4, behaviour, target, opcodestr # ".l">;
++}
++
++multiclass DSE_STREAM_DMOD_BEHAVIOUR_V<DSE_ModiferTarget target, string opcodestr>{
++  defm _INC : DSE_STREAM_DMOD_DTARGET_V<DSE_ModifierBehaviour_INC, target, opcodestr # ".inc">;
++  defm _DEC : DSE_STREAM_DMOD_DTARGET_V<DSE_ModifierBehaviour_DEC, target, opcodestr # ".dec">;
++  defm _ADD : DSE_STREAM_DMOD_DTARGET_V<DSE_ModifierBehaviour_ADD, target, opcodestr # ".add">;
++  defm _SUB : DSE_STREAM_DMOD_DTARGET_V<DSE_ModifierBehaviour_SUB, target, opcodestr # ".sub">;
++  defm _SET : DSE_STREAM_DMOD_DTARGET_V<DSE_ModifierBehaviour_SET, target, opcodestr # ".set">;
++}
++
++multiclass DSE_STREAM_DMOD_TARGET_V<string opcodestr>{
++  defm _OFS : DSE_STREAM_DMOD_BEHAVIOUR_V<DSE_ModiferTarget_OFFSET, opcodestr # ".ofs">;
++  defm _STR : DSE_STREAM_DMOD_BEHAVIOUR_V<DSE_ModiferTarget_STRIDE, opcodestr # ".str">;
++  defm _SIZ : DSE_STREAM_DMOD_BEHAVIOUR_V<DSE_ModiferTarget_SIZE  , opcodestr # ".siz">;
++}
++}
++
++//===----------------------------------------------------------------------===//
++// DSE Dynamic Modifiers Instructions
++//===----------------------------------------------------------------------===//
++// Integer
++defm DSE_STREAM_DMOD_I : DSE_STREAM_DMOD_TARGET_I<"ss.app.i.ind">;
++// Floating-point
++defm DSE_STREAM_DMOD_F : DSE_STREAM_DMOD_TARGET_F<"ss.app.f.ind">;
++// Vector
++defm DSE_STREAM_DMOD_V : DSE_STREAM_DMOD_TARGET_V<"ss.app.v.ind">;
++
++//===----------------------------------------------------------------------===//
++// DSE Scatter-Gather Indirect Modifier Instruction class templates
++//===----------------------------------------------------------------------===//
++
++let hasSideEffects = 0, mayLoad = 1, mayStore = 1 in {
++
++// Integer
++class DSE_STREAM_SGIND_I<DSE_ModifierBehaviour behaviour, string opcodestr>
++      : DSE_STREAM_MOD<DSE_Instype_END, DSE_ModiferType_NULL, DSE_regtype_I, 
++                       DSE_ModiferTarget_NULL, behaviour,
++                       DSE_StreamDim_NULL,
++                       (outs GPR:$sd), (ins GPR:$ss1),
++                       opcodestr, "$sd, $ss1"> {
++  let Predicates = [HasCustomExtDSEI, HasCustomExtDSEMODSGI];
++}
++
++multiclass DSE_STREAM_SGIND_BEHAVIOUR_I<string opcodestr>{
++  def _INC      : DSE_STREAM_SGIND_I<DSE_ModifierBehaviour_INC, opcodestr # ".inc">;
++  def _DEC      : DSE_STREAM_SGIND_I<DSE_ModifierBehaviour_DEC, opcodestr # ".dec">;
++  def _ADD      : DSE_STREAM_SGIND_I<DSE_ModifierBehaviour_ADD, opcodestr # ".add">;
++  def _SUB      : DSE_STREAM_SGIND_I<DSE_ModifierBehaviour_SUB, opcodestr # ".sub">;
++  def _SET      : DSE_STREAM_SGIND_I<DSE_ModifierBehaviour_SET, opcodestr # ".set">;
++}
++
++// Floating-point
++class DSE_STREAM_SGIND_F<DSE_ModifierBehaviour behaviour, string opcodestr>
++      : DSE_STREAM_MOD<DSE_Instype_END, DSE_ModiferType_NULL, DSE_regtype_F, 
++                       DSE_ModiferTarget_NULL, behaviour,
++                       DSE_StreamDim_NULL,
++                       (outs FPR32:$sd), (ins GPR:$ss1),
++                       opcodestr, "$sd, $ss1"> {
++  let Predicates = [HasCustomExtDSEF, HasCustomExtDSEMODSGI];
++}
++
++multiclass DSE_STREAM_SGIND_BEHAVIOUR_F<string opcodestr>{
++  def _INC      : DSE_STREAM_SGIND_F<DSE_ModifierBehaviour_INC, opcodestr # ".inc">;
++  def _DEC      : DSE_STREAM_SGIND_F<DSE_ModifierBehaviour_DEC, opcodestr # ".dec">;
++  def _ADD      : DSE_STREAM_SGIND_F<DSE_ModifierBehaviour_ADD, opcodestr # ".add">;
++  def _SUB      : DSE_STREAM_SGIND_F<DSE_ModifierBehaviour_SUB, opcodestr # ".sub">;
++  def _SET      : DSE_STREAM_SGIND_F<DSE_ModifierBehaviour_SET, opcodestr # ".set">;
++}
++
++// Vector
++class DSE_STREAM_SGIND_V<DSE_ModifierBehaviour behaviour, string opcodestr>
++      : DSE_STREAM_MOD<DSE_Instype_END, DSE_ModiferType_NULL, DSE_regtype_V, 
++                       DSE_ModiferTarget_NULL, behaviour,
++                       DSE_StreamDim_NULL,
++                       (outs VR:$sd), (ins VR:$ss1),
++                       opcodestr, "$sd, $ss1"> {
++  let Predicates = [HasCustomExtDSEV, HasCustomExtDSEMODSGI];
++}
++
++multiclass DSE_STREAM_SGIND_BEHAVIOUR_V<string opcodestr>{
++  def _INC      : DSE_STREAM_SGIND_V<DSE_ModifierBehaviour_INC, opcodestr # ".inc">;
++  def _DEC      : DSE_STREAM_SGIND_V<DSE_ModifierBehaviour_DEC, opcodestr # ".dec">;
++  def _ADD      : DSE_STREAM_SGIND_V<DSE_ModifierBehaviour_ADD, opcodestr # ".add">;
++  def _SUB      : DSE_STREAM_SGIND_V<DSE_ModifierBehaviour_SUB, opcodestr # ".sub">;
++  def _SET      : DSE_STREAM_SGIND_V<DSE_ModifierBehaviour_SET, opcodestr # ".set">;
++}
++}
++
++//===----------------------------------------------------------------------===//
++// DSE Scatter-Gather Indirect Modifier Instructions
++//===----------------------------------------------------------------------===//
++// Integer
++defm DSE_STREAM_MSGIND_I : DSE_STREAM_SGIND_BEHAVIOUR_I<"ss.end.i.sgi">;
++// Floating-point
++defm DSE_STREAM_MSGIND_F : DSE_STREAM_SGIND_BEHAVIOUR_F<"ss.end.f.sgi">;
++// Vector
++defm DSE_STREAM_MSGIND_V : DSE_STREAM_SGIND_BEHAVIOUR_V<"ss.end.v.sgi">;
++
 +
 +//===----------------------------------------------------------------------===//
 +// DSE Branch Instruction class templates

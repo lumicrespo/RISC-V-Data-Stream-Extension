@@ -1,6 +1,6 @@
 #!/bin/bash
 
-set -euo pipefail
+# set -euo pipefail
 
 DIR=$(dirname $(realpath $0))
 : "${RISCV:?Please export RISCV to the RISC-V toolchain installation directory.}"

@@ -522,8 +522,8 @@ instruction families are independently controlled by:
 | 31-30 | 29-28 | 27 | 26-25 | 24-22 | 21-20 | 19-15 | 14-12 | 11-7 | Encoding
 
 | tmod | tdim | -     | regtype | behavior | target | rs1    | type | rd | ss.app.mod
-| tmod | tdim | otype | regtype | behavior | target | s1     | type | rd | ss.app.ind
-| -    | -    | otype | regtype | behavior | -      | s1     | type | rd | ss.end.sgi
+| tmod | tdim | -     | regtype | behavior | target | s1     | type | rd | ss.app.ind
+| -    | -    | -     | regtype | behavior | -      | s1     | type | rd | ss.end.sgi
 |===
 
 [cols="4,12"]
@@ -532,7 +532,6 @@ instruction families are independently controlled by:
 
 | tmod[1:0]     | Modifier class (static or indirect).
 | tdim[1:0]     | Target dimension to modify.
-| otype         | Stream type selector (`i`,`v`) for stream index s1.
 | regtype[1:0]  | Stream register class (`i`, `f`, `v`, `m`).
 | behavior[2:0] | Modifier behavior within class.
 | target[1:0]   | Modifier parameter target.
