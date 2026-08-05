@@ -6,3 +6,5 @@
 # Assembly dumps
 *.dump
 *.s
+RISCV
+riscv-gnu-toolchain

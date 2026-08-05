@@ -115,7 +115,7 @@ index be8834fd4c2f..766ae849bed6 100644
                         "'Zvfh' (Vector Half-Precision Floating-Point)",
 diff --git a/llvm/lib/Target/RISCV/RISCVInstrFormatsDSE.td b/llvm/lib/Target/RISCV/RISCVInstrFormatsDSE.td
 new file mode 100644
-index 000000000000..3f3f04fe6a99
+index 000000000000..afed75ba3232
 --- /dev/null
 +++ b/llvm/lib/Target/RISCV/RISCVInstrFormatsDSE.td
 @@ -0,0 +1,239 @@
@@ -143,9 +143,9 @@ index 000000000000..3f3f04fe6a99
 +  bits<2> Value = Itype;
 +}
 +
-+def DSE_Instype_STA  : DSE_Instype<0b00>;
-+def DSE_Instype_APP  : DSE_Instype<0b01>;
-+def DSE_Instype_END  : DSE_Instype<0b10>;
++def DSE_Instype_APP  : DSE_Instype<0b00>;
++def DSE_Instype_END  : DSE_Instype<0b01>;
++def DSE_Instype_STA  : DSE_Instype<0b10>;
 +def DSE_Instype_CTRL : DSE_Instype<0b11>;
 +def DSE_Instype_NULL : DSE_Instype<0b00>;
 +
@@ -164,8 +164,8 @@ index 000000000000..3f3f04fe6a99
 +  bits<2> Value = Stype;
 +}
 +
-+def DSE_Stype_ST : DSE_StreamType<0b00>;
-+def DSE_Stype_LD : DSE_StreamType<0b01>;
++def DSE_Stype_LD : DSE_StreamType<0b00>;
++def DSE_Stype_ST : DSE_StreamType<0b01>;
 +// other options are reserved for future use
 +def DSE_Stype_NULL : DSE_StreamType<0b00>;
 +
